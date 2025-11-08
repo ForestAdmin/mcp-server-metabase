@@ -363,6 +363,189 @@ TOOL_DEFINITIONS = [
             "required": [],
         },
     ),
+    # WRITE OPERATIONS
+    types.Tool(
+        name="create_question",
+        description="Create a new question (saved query/report) in Metabase. Requires a SQL query or MBQL query definition.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Question name",
+                },
+                "database_id": {
+                    "type": "integer",
+                    "description": "Database ID to query against",
+                },
+                "query": {
+                    "type": "object",
+                    "description": "Query definition - either native SQL or MBQL format",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description of the question",
+                },
+                "collection_id": {
+                    "type": "integer",
+                    "description": "Optional collection ID to save the question in",
+                },
+                "visualization_settings": {
+                    "type": "object",
+                    "description": "Optional visualization settings (display type, formatting, etc.)",
+                }
+            },
+            "required": ["name", "database_id", "query"],
+        },
+    ),
+    types.Tool(
+        name="update_question",
+        description="Update an existing question/report in Metabase. You can update the name, description, query, or visualization settings.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question_id": {
+                    "type": "integer",
+                    "description": "Question ID to update",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "New question name (optional)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description (optional)",
+                },
+                "query": {
+                    "type": "object",
+                    "description": "New query definition (optional)",
+                },
+                "visualization_settings": {
+                    "type": "object",
+                    "description": "New visualization settings (optional)",
+                },
+                "collection_id": {
+                    "type": "integer",
+                    "description": "New collection ID (optional)",
+                }
+            },
+            "required": ["question_id"],
+        },
+    ),
+    types.Tool(
+        name="delete_question",
+        description="Delete a question/report from Metabase. This operation cannot be undone.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "question_id": {
+                    "type": "integer",
+                    "description": "Question ID to delete",
+                }
+            },
+            "required": ["question_id"],
+        },
+    ),
+    types.Tool(
+        name="create_dashboard",
+        description="Create a new dashboard in Metabase. After creation, you can add question cards to it.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Dashboard name",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional description",
+                },
+                "collection_id": {
+                    "type": "integer",
+                    "description": "Optional collection ID to save the dashboard in",
+                }
+            },
+            "required": ["name"],
+        },
+    ),
+    types.Tool(
+        name="update_dashboard",
+        description="Update an existing dashboard's name, description, or collection.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "dashboard_id": {
+                    "type": "integer",
+                    "description": "Dashboard ID to update",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "New dashboard name (optional)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description (optional)",
+                },
+                "collection_id": {
+                    "type": "integer",
+                    "description": "New collection ID (optional)",
+                }
+            },
+            "required": ["dashboard_id"],
+        },
+    ),
+    types.Tool(
+        name="delete_dashboard",
+        description="Delete a dashboard from Metabase. This operation cannot be undone.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "dashboard_id": {
+                    "type": "integer",
+                    "description": "Dashboard ID to delete",
+                }
+            },
+            "required": ["dashboard_id"],
+        },
+    ),
+    types.Tool(
+        name="add_card_to_dashboard",
+        description="Add a question card to a dashboard. You can specify the position and size.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "dashboard_id": {
+                    "type": "integer",
+                    "description": "Dashboard ID",
+                },
+                "card_id": {
+                    "type": "integer",
+                    "description": "Question/card ID to add to the dashboard",
+                },
+                "row": {
+                    "type": "integer",
+                    "description": "Row position (default: 0)",
+                    "default": 0,
+                },
+                "col": {
+                    "type": "integer",
+                    "description": "Column position (default: 0)",
+                    "default": 0,
+                },
+                "size_x": {
+                    "type": "integer",
+                    "description": "Card width (default: 4)",
+                    "default": 4,
+                },
+                "size_y": {
+                    "type": "integer",
+                    "description": "Card height (default: 4)",
+                    "default": 4,
+                }
+            },
+            "required": ["dashboard_id", "card_id"],
+        },
+    ),
 ]
 
 
@@ -501,6 +684,69 @@ async def execute_tool(
         limit = arguments.get("limit", 10)
         activity = await client.get_activity(limit)
         return _format_activity(activity)
+
+    # WRITE OPERATIONS - QUESTIONS
+    elif tool_name == "create_question":
+        name = arguments["name"]
+        database_id = arguments["database_id"]
+        query = arguments["query"]
+        description = arguments.get("description")
+        collection_id = arguments.get("collection_id")
+        visualization_settings = arguments.get("visualization_settings")
+        result = await client.create_question(
+            name, database_id, query, description, collection_id, visualization_settings
+        )
+        return _format_question_write_result(result, "created")
+
+    elif tool_name == "update_question":
+        question_id = arguments["question_id"]
+        name = arguments.get("name")
+        description = arguments.get("description")
+        query = arguments.get("query")
+        visualization_settings = arguments.get("visualization_settings")
+        collection_id = arguments.get("collection_id")
+        result = await client.update_question(
+            question_id, name, description, query, visualization_settings, collection_id
+        )
+        return _format_question_write_result(result, "updated")
+
+    elif tool_name == "delete_question":
+        question_id = arguments["question_id"]
+        result = await client.delete_question(question_id)
+        return _format_delete_result("question", question_id)
+
+    # WRITE OPERATIONS - DASHBOARDS
+    elif tool_name == "create_dashboard":
+        name = arguments["name"]
+        description = arguments.get("description")
+        collection_id = arguments.get("collection_id")
+        result = await client.create_dashboard(name, description, collection_id)
+        return _format_dashboard_write_result(result, "created")
+
+    elif tool_name == "update_dashboard":
+        dashboard_id = arguments["dashboard_id"]
+        name = arguments.get("name")
+        description = arguments.get("description")
+        collection_id = arguments.get("collection_id")
+        result = await client.update_dashboard(dashboard_id, name, description, collection_id)
+        return _format_dashboard_write_result(result, "updated")
+
+    elif tool_name == "delete_dashboard":
+        dashboard_id = arguments["dashboard_id"]
+        result = await client.delete_dashboard(dashboard_id)
+        return _format_delete_result("dashboard", dashboard_id)
+
+    elif tool_name == "add_card_to_dashboard":
+        dashboard_id = arguments["dashboard_id"]
+        card_id = arguments["card_id"]
+        row = arguments.get("row", 0)
+        col = arguments.get("col", 0)
+        size_x = arguments.get("size_x", 4)
+        size_y = arguments.get("size_y", 4)
+        result = await client.add_card_to_dashboard(
+            dashboard_id, card_id, row, col, size_x, size_y
+        )
+        return _format_card_added_result(result, dashboard_id, card_id)
 
     else:
         raise ValueError(f"Unknown tool: {tool_name}")
@@ -834,5 +1080,82 @@ def _format_activity(activity: list[dict[str, Any]]) -> str:
             lines.append(f"- **Details**: {json.dumps(item['details'])[:100]}")
         lines.append(f"- **Timestamp**: {item.get('timestamp', 'N/A')}")
         lines.append("")
+
+    return "\n".join(lines)
+
+
+# ==================== WRITE OPERATION FORMATTING ====================
+
+def _format_question_write_result(question: dict[str, Any], action: str) -> str:
+    """Format question create/update result."""
+    lines = [f"# Question {action.title()} Successfully\n"]
+
+    lines.append(f"**ID**: {question.get('id')}")
+    lines.append(f"**Name**: {question.get('name')}")
+
+    if question.get('description'):
+        lines.append(f"**Description**: {question['description']}")
+
+    lines.append(f"**Database ID**: {question.get('database')}")
+    lines.append(f"**Display Type**: {question.get('display', 'table')}")
+
+    if question.get('collection_id'):
+        lines.append(f"**Collection ID**: {question['collection_id']}")
+
+    if question.get('dataset_query'):
+        query_type = question['dataset_query'].get('type', 'unknown')
+        lines.append(f"**Query Type**: {query_type}")
+
+    lines.append(f"\n**Created**: {question.get('created_at', 'N/A')}")
+    lines.append(f"**Updated**: {question.get('updated_at', 'N/A')}")
+
+    return "\n".join(lines)
+
+
+def _format_dashboard_write_result(dashboard: dict[str, Any], action: str) -> str:
+    """Format dashboard create/update result."""
+    lines = [f"# Dashboard {action.title()} Successfully\n"]
+
+    lines.append(f"**ID**: {dashboard.get('id')}")
+    lines.append(f"**Name**: {dashboard.get('name')}")
+
+    if dashboard.get('description'):
+        lines.append(f"**Description**: {dashboard['description']}")
+
+    if dashboard.get('collection_id'):
+        lines.append(f"**Collection ID**: {dashboard['collection_id']}")
+
+    # Card count if available
+    if 'ordered_cards' in dashboard:
+        lines.append(f"**Cards**: {len(dashboard['ordered_cards'])}")
+
+    lines.append(f"\n**Created**: {dashboard.get('created_at', 'N/A')}")
+    lines.append(f"**Updated**: {dashboard.get('updated_at', 'N/A')}")
+
+    return "\n".join(lines)
+
+
+def _format_delete_result(resource_type: str, resource_id: int) -> str:
+    """Format delete operation result."""
+    return f"# {resource_type.title()} Deleted Successfully\n\n**ID**: {resource_id}\n\nThe {resource_type} has been permanently deleted from Metabase."
+
+
+def _format_card_added_result(
+    result: dict[str, Any], dashboard_id: int, card_id: int
+) -> str:
+    """Format add card to dashboard result."""
+    lines = [f"# Card Added to Dashboard Successfully\n"]
+
+    lines.append(f"**Dashboard ID**: {dashboard_id}")
+    lines.append(f"**Card ID**: {card_id}")
+
+    if result.get('id'):
+        lines.append(f"**Dashboard Card ID**: {result['id']}")
+
+    if result.get('row') is not None:
+        lines.append(f"**Position**: Row {result['row']}, Column {result.get('col', 0)}")
+
+    if result.get('size_x') is not None:
+        lines.append(f"**Size**: {result['size_x']}x{result.get('size_y', 4)}")
 
     return "\n".join(lines)

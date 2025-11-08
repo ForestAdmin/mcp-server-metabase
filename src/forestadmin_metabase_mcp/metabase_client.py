@@ -605,6 +605,279 @@ class MetabaseClient:
             logger.error(f"Failed to get activity: {e}")
             raise
 
+    # WRITE OPERATIONS
+
+    async def create_question(
+        self,
+        name: str,
+        database_id: int,
+        query: dict[str, Any],
+        description: str | None = None,
+        collection_id: int | None = None,
+        visualization_settings: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Create a new question (saved query) in Metabase.
+
+        Args:
+            name: Question name
+            database_id: Database ID for the query
+            query: Query definition (native SQL or MBQL)
+            description: Optional description
+            collection_id: Optional collection ID to save in
+            visualization_settings: Optional visualization configuration
+
+        Returns:
+            Created question data
+        """
+        await self._ensure_authenticated()
+
+        payload = {
+            "name": name,
+            "database": database_id,
+            "dataset_query": query,
+            "display": visualization_settings.get("display", "table") if visualization_settings else "table",
+            "visualization_settings": visualization_settings or {}
+        }
+
+        if description:
+            payload["description"] = description
+        if collection_id is not None:
+            payload["collection_id"] = collection_id
+
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/card",
+                json=payload,
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to create question: {e}")
+            raise
+
+    async def update_question(
+        self,
+        question_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        query: dict[str, Any] | None = None,
+        visualization_settings: dict[str, Any] | None = None,
+        collection_id: int | None = None
+    ) -> dict[str, Any]:
+        """Update an existing question.
+
+        Args:
+            question_id: Question ID to update
+            name: New name (optional)
+            description: New description (optional)
+            query: New query definition (optional)
+            visualization_settings: New visualization settings (optional)
+            collection_id: New collection ID (optional)
+
+        Returns:
+            Updated question data
+        """
+        await self._ensure_authenticated()
+
+        # Get existing question first
+        try:
+            existing = await self.get_question(question_id)
+
+            # Build update payload with only changed fields
+            payload = {
+                "name": name if name is not None else existing["name"],
+                "description": description if description is not None else existing.get("description", ""),
+                "dataset_query": query if query is not None else existing["dataset_query"],
+                "display": existing["display"],
+                "visualization_settings": visualization_settings if visualization_settings is not None else existing.get("visualization_settings", {})
+            }
+
+            if collection_id is not None:
+                payload["collection_id"] = collection_id
+            elif "collection_id" in existing:
+                payload["collection_id"] = existing["collection_id"]
+
+            response = await self.client.put(
+                f"{self.base_url}/api/card/{question_id}",
+                json=payload,
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to update question: {e}")
+            raise
+
+    async def delete_question(self, question_id: int) -> dict[str, Any]:
+        """Delete a question.
+
+        Args:
+            question_id: Question ID to delete
+
+        Returns:
+            Deletion confirmation
+        """
+        await self._ensure_authenticated()
+
+        try:
+            response = await self.client.delete(
+                f"{self.base_url}/api/card/{question_id}",
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return {"id": question_id, "deleted": True}
+        except Exception as e:
+            logger.error(f"Failed to delete question: {e}")
+            raise
+
+    async def create_dashboard(
+        self,
+        name: str,
+        description: str | None = None,
+        collection_id: int | None = None
+    ) -> dict[str, Any]:
+        """Create a new dashboard.
+
+        Args:
+            name: Dashboard name
+            description: Optional description
+            collection_id: Optional collection ID
+
+        Returns:
+            Created dashboard data
+        """
+        await self._ensure_authenticated()
+
+        payload = {"name": name}
+        if description:
+            payload["description"] = description
+        if collection_id is not None:
+            payload["collection_id"] = collection_id
+
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/dashboard",
+                json=payload,
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to create dashboard: {e}")
+            raise
+
+    async def update_dashboard(
+        self,
+        dashboard_id: int,
+        name: str | None = None,
+        description: str | None = None,
+        collection_id: int | None = None
+    ) -> dict[str, Any]:
+        """Update an existing dashboard.
+
+        Args:
+            dashboard_id: Dashboard ID to update
+            name: New name (optional)
+            description: New description (optional)
+            collection_id: New collection ID (optional)
+
+        Returns:
+            Updated dashboard data
+        """
+        await self._ensure_authenticated()
+
+        # Get existing dashboard
+        try:
+            existing = await self.get_dashboard(dashboard_id)
+
+            payload = {
+                "name": name if name is not None else existing["name"],
+                "description": description if description is not None else existing.get("description", "")
+            }
+
+            if collection_id is not None:
+                payload["collection_id"] = collection_id
+            elif "collection_id" in existing:
+                payload["collection_id"] = existing["collection_id"]
+
+            response = await self.client.put(
+                f"{self.base_url}/api/dashboard/{dashboard_id}",
+                json=payload,
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to update dashboard: {e}")
+            raise
+
+    async def delete_dashboard(self, dashboard_id: int) -> dict[str, Any]:
+        """Delete a dashboard.
+
+        Args:
+            dashboard_id: Dashboard ID to delete
+
+        Returns:
+            Deletion confirmation
+        """
+        await self._ensure_authenticated()
+
+        try:
+            response = await self.client.delete(
+                f"{self.base_url}/api/dashboard/{dashboard_id}",
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return {"id": dashboard_id, "deleted": True}
+        except Exception as e:
+            logger.error(f"Failed to delete dashboard: {e}")
+            raise
+
+    async def add_card_to_dashboard(
+        self,
+        dashboard_id: int,
+        card_id: int,
+        row: int = 0,
+        col: int = 0,
+        size_x: int = 4,
+        size_y: int = 4
+    ) -> dict[str, Any]:
+        """Add a question card to a dashboard.
+
+        Args:
+            dashboard_id: Dashboard ID
+            card_id: Question/card ID to add
+            row: Row position (default: 0)
+            col: Column position (default: 0)
+            size_x: Card width (default: 4)
+            size_y: Card height (default: 4)
+
+        Returns:
+            Dashboard card data
+        """
+        await self._ensure_authenticated()
+
+        payload = {
+            "cardId": card_id,
+            "row": row,
+            "col": col,
+            "sizeX": size_x,
+            "sizeY": size_y
+        }
+
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/api/dashboard/{dashboard_id}/cards",
+                json=payload,
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to add card to dashboard: {e}")
+            raise
+
     def close(self):
         """Close HTTP client."""
         try:
