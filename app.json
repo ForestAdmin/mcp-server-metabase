@@ -1,0 +1,34 @@
+{
+  "name": "Forest Admin Metabase MCP Server",
+  "description": "MCP server connecting Dust.tt to Metabase",
+  "repository": "https://github.com/ForestAdmin/mcp-server-metabase",
+  "keywords": ["mcp", "metabase", "dust", "bi", "analytics"],
+  "env": {
+    "METABASE_URL": {
+      "description": "Your Metabase instance URL",
+      "required": true
+    },
+    "METABASE_API_KEY": {
+      "description": "Metabase API key (created in admin panel)",
+      "required": false
+    },
+    "METABASE_USERNAME": {
+      "description": "Metabase username (alternative to API key)",
+      "required": false
+    },
+    "METABASE_PASSWORD": {
+      "description": "Metabase password (alternative to API key)",
+      "required": false
+    },
+    "MCP_AUTH_TOKEN": {
+      "description": "Token for securing MCP endpoints",
+      "generator": "secret"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "stack": "heroku-24"
+}
