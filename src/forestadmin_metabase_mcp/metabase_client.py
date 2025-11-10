@@ -645,15 +645,20 @@ class MetabaseClient:
             payload["collection_id"] = collection_id
 
         try:
+            logger.info(f"Creating question with payload: {payload}")
             response = await self.client.post(
                 f"{self.base_url}/api/card",
                 json=payload,
                 headers=self._get_headers()
             )
+            logger.info(f"Response status: {response.status_code}")
+            if response.status_code >= 400:
+                logger.error(f"Response body: {response.text}")
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.error(f"Failed to create question: {e}")
+            logger.error(f"Payload was: {payload}")
             raise
 
     async def update_question(
