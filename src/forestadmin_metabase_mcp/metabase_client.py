@@ -621,7 +621,7 @@ class MetabaseClient:
         Args:
             name: Question name
             database_id: Database ID for the query
-            query: Query definition (native SQL or MBQL)
+            query: Query definition (native SQL or MBQL) - should be complete dataset_query with database, type, and query/native fields
             description: Optional description
             collection_id: Optional collection ID to save in
             visualization_settings: Optional visualization configuration
@@ -631,10 +631,14 @@ class MetabaseClient:
         """
         await self._ensure_authenticated()
 
+        # Ensure dataset_query has the database field set correctly
+        dataset_query = query.copy()
+        if "database" not in dataset_query:
+            dataset_query["database"] = database_id
+
         payload = {
             "name": name,
-            "database": database_id,
-            "dataset_query": query,
+            "dataset_query": dataset_query,
             "display": visualization_settings.get("display", "table") if visualization_settings else "table",
             "visualization_settings": visualization_settings or {}
         }
