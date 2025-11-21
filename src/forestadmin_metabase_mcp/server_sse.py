@@ -1,6 +1,7 @@
 """MCP SSE server for Dust.tt using official MCP SDK."""
 
 import asyncio
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -8,9 +9,14 @@ from typing import Any
 
 from fastapi import FastAPI, Request, HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import Response
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 import mcp.types as types
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .metabase_client import MetabaseClient
 from .tools import TOOL_DEFINITIONS, execute_tool
@@ -22,17 +28,51 @@ logger = logging.getLogger(__name__)
 # Security
 security = HTTPBearer(auto_error=False)
 
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
 # Global Metabase client
 metabase_client: MetabaseClient | None = None
 
 
+# Middleware for request size limits
+class LimitUploadSize(BaseHTTPMiddleware):
+    """Middleware to limit request body size and prevent memory exhaustion attacks."""
+
+    def __init__(self, app, max_upload_size: int = 1_000_000):
+        super().__init__(app)
+        self.max_upload_size = max_upload_size
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ["POST", "PUT", "PATCH"]:
+            if "content-length" in request.headers:
+                content_length = int(request.headers["content-length"])
+                if content_length > self.max_upload_size:
+                    logger.warning(
+                        f"Request rejected: payload size {content_length} exceeds limit {self.max_upload_size}"
+                    )
+                    return Response(
+                        content='{"detail":"Request payload too large. Maximum size is 1MB."}',
+                        status_code=413,
+                        media_type="application/json"
+                    )
+        return await call_next(request)
+
+
+def hash_token(token: str) -> str:
+    """Hash a token for secure logging without exposing the actual token."""
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
 async def verify_mcp_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(security)
 ) -> str:
     """
     Verify MCP authentication token from Authorization header.
 
     Args:
+        request: FastAPI request object for IP logging
         credentials: HTTP Bearer token credentials
 
     Returns:
@@ -53,7 +93,8 @@ async def verify_mcp_token(
 
     # Check if credentials were provided
     if not credentials:
-        logger.warning("Authentication attempt without credentials")
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"Authentication attempt without credentials from IP: {client_ip}")
         raise HTTPException(
             status_code=401,
             detail="Missing authentication token. Please provide Bearer token in Authorization header."
@@ -61,7 +102,12 @@ async def verify_mcp_token(
 
     # Verify token matches
     if credentials.credentials != expected_token:
-        logger.warning(f"Invalid authentication attempt from token: {credentials.credentials[:10]}...")
+        client_ip = request.client.host if request.client else "unknown"
+        token_hash = hash_token(credentials.credentials)
+        logger.warning(
+            f"Invalid authentication attempt from IP: {client_ip}, "
+            f"token hash: {token_hash}"
+        )
         raise HTTPException(
             status_code=403,
             detail="Invalid authentication token"
@@ -117,6 +163,34 @@ app = FastAPI(
     openapi_url=None,     # Disable OpenAPI JSON endpoint for security
 )
 
+# Configure rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add security middlewares
+app.add_middleware(LimitUploadSize, max_upload_size=1_000_000)  # 1MB limit
+
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "default-src 'none'"
+
+    # HSTS for HTTPS connections (Heroku handles this but we can add it)
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
+
+
 # Initialize MCP server
 mcp_server = Server("forestadmin-metabase-mcp")
 
@@ -144,13 +218,14 @@ async def handle_call_tool(
 
 
 @app.get("/")
+@limiter.limit("30/minute")  # Rate limit SSE connections
 async def root(request: Request, credentials: HTTPAuthorizationCredentials | None = Security(security)):
     """MCP endpoint - handle both health check and SSE connections."""
     # Check if client wants SSE (MCP protocol)
     accept = request.headers.get("accept", "")
     if "text/event-stream" in accept:
         # SSE connections require authentication
-        await verify_mcp_token(credentials)
+        await verify_mcp_token(request, credentials)
         # Return SSE stream for MCP
         from sse_starlette.sse import EventSourceResponse
 
@@ -195,6 +270,7 @@ async def root(request: Request, credentials: HTTPAuthorizationCredentials | Non
 
 
 @app.post("/")
+@limiter.limit("20/minute")  # Rate limit API calls
 async def root_post(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle JSON-RPC requests via POST to root endpoint (Dust.tt compatibility)."""
     try:
@@ -303,6 +379,7 @@ sse = SseServerTransport("/sse")
 
 
 @app.get("/sse")
+@limiter.limit("30/minute")  # Rate limit SSE connections
 async def handle_sse_get(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle SSE connections for MCP protocol (GET requests)."""
     from sse_starlette.sse import EventSourceResponse
@@ -337,6 +414,7 @@ async def handle_sse_get(request: Request, token: str = Depends(verify_mcp_token
 
 
 @app.post("/sse")
+@limiter.limit("20/minute")  # Rate limit API calls
 async def handle_sse_post(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle JSON-RPC requests via POST to SSE endpoint."""
     try:

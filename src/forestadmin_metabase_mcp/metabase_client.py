@@ -183,15 +183,44 @@ class MetabaseClient:
         query: str,
         parameters: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Execute a native SQL query."""
+        """Execute a native SQL query with improved security validation."""
         await self._ensure_authenticated()
 
-        # Validate read-only (basic check)
+        # Improved read-only validation
         query_upper = query.strip().upper()
-        forbidden = ["INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE"]
+
+        # Expanded forbidden keywords (more comprehensive)
+        forbidden = [
+            "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+            "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
+            "INTO", "MERGE", "REPLACE", "CALL", "PREPARE",
+            "DEALLOCATE", "LOCK", "UNLOCK"
+        ]
+
+        # Check for forbidden keywords anywhere in query (not just at start or with spaces)
         for keyword in forbidden:
-            if query_upper.startswith(keyword) or f" {keyword} " in f" {query_upper} ":
-                raise ValueError(f"Forbidden keyword: {keyword}. Only read-only queries are allowed.")
+            # Use word boundaries for more accurate matching
+            if f" {keyword} " in f" {query_upper} " or query_upper.startswith(keyword + " "):
+                raise ValueError(f"Forbidden keyword: {keyword}. Only read-only SELECT queries are allowed.")
+
+        # Additional checks for common SQL injection patterns
+        dangerous_patterns = [
+            ";",  # Multiple statements
+            "--",  # SQL comments
+            "/*",  # Multi-line comments
+            "INFORMATION_SCHEMA",  # Schema introspection
+            "PG_",  # PostgreSQL system tables
+            "MYSQL.",  # MySQL system tables
+        ]
+
+        for pattern in dangerous_patterns:
+            if pattern in query_upper:
+                logger.warning(f"Query rejected: contains potentially dangerous pattern '{pattern}'")
+                raise ValueError(f"Query contains potentially dangerous pattern: {pattern}. Only simple SELECT queries are allowed.")
+
+        # Ensure query starts with SELECT (allowlist approach)
+        if not query_upper.startswith("SELECT ") and not query_upper.startswith("WITH "):
+            raise ValueError("Only SELECT and WITH (CTE) queries are allowed.")
 
         try:
             payload = {
