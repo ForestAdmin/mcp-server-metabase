@@ -112,6 +112,9 @@ app = FastAPI(
     description="MCP server for Metabase with SSE transport for Dust.tt",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None,        # Disable Swagger UI for security
+    redoc_url=None,       # Disable ReDoc for security
+    openapi_url=None,     # Disable OpenAPI JSON endpoint for security
 )
 
 # Initialize MCP server
