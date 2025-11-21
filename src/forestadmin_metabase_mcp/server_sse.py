@@ -6,7 +6,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException, Security, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 import mcp.types as types
@@ -18,8 +19,56 @@ from .tools import TOOL_DEFINITIONS, execute_tool
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Security
+security = HTTPBearer(auto_error=False)
+
 # Global Metabase client
 metabase_client: MetabaseClient | None = None
+
+
+async def verify_mcp_token(
+    credentials: HTTPAuthorizationCredentials | None = Security(security)
+) -> str:
+    """
+    Verify MCP authentication token from Authorization header.
+
+    Args:
+        credentials: HTTP Bearer token credentials
+
+    Returns:
+        The validated token string
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+    expected_token = os.getenv("MCP_AUTH_TOKEN")
+
+    # Check if MCP_AUTH_TOKEN is configured
+    if not expected_token:
+        logger.error("MCP_AUTH_TOKEN not configured in environment")
+        raise HTTPException(
+            status_code=500,
+            detail="Server authentication not configured"
+        )
+
+    # Check if credentials were provided
+    if not credentials:
+        logger.warning("Authentication attempt without credentials")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authentication token. Please provide Bearer token in Authorization header."
+        )
+
+    # Verify token matches
+    if credentials.credentials != expected_token:
+        logger.warning(f"Invalid authentication attempt from token: {credentials.credentials[:10]}...")
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid authentication token"
+        )
+
+    logger.debug("Authentication successful")
+    return credentials.credentials
 
 
 @asynccontextmanager
@@ -92,11 +141,13 @@ async def handle_call_tool(
 
 
 @app.get("/")
-async def root(request: Request):
+async def root(request: Request, credentials: HTTPAuthorizationCredentials | None = Security(security)):
     """MCP endpoint - handle both health check and SSE connections."""
     # Check if client wants SSE (MCP protocol)
     accept = request.headers.get("accept", "")
     if "text/event-stream" in accept:
+        # SSE connections require authentication
+        await verify_mcp_token(credentials)
         # Return SSE stream for MCP
         from sse_starlette.sse import EventSourceResponse
 
@@ -141,7 +192,7 @@ async def root(request: Request):
 
 
 @app.post("/")
-async def root_post(request: Request):
+async def root_post(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle JSON-RPC requests via POST to root endpoint (Dust.tt compatibility)."""
     try:
         body = await request.json()
@@ -249,7 +300,7 @@ sse = SseServerTransport("/sse")
 
 
 @app.get("/sse")
-async def handle_sse_get(request: Request):
+async def handle_sse_get(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle SSE connections for MCP protocol (GET requests)."""
     from sse_starlette.sse import EventSourceResponse
 
@@ -283,7 +334,7 @@ async def handle_sse_get(request: Request):
 
 
 @app.post("/sse")
-async def handle_sse_post(request: Request):
+async def handle_sse_post(request: Request, token: str = Depends(verify_mcp_token)):
     """Handle JSON-RPC requests via POST to SSE endpoint."""
     try:
         body = await request.json()
