@@ -5,7 +5,7 @@ import requests
 import json
 
 BASE_URL = "http://127.0.0.1:8001"
-TOKEN = "529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f"
+TOKEN = "<use_your_actual_token_here>"
 
 def test_no_auth():
     """Test request without authentication."""

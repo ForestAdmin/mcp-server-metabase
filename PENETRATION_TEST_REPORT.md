@@ -782,7 +782,7 @@ The Forest Admin Metabase MCP Server has **successfully implemented critical sec
 
 ## Appendix A: Token Entropy Analysis
 
-**Current Token**: `529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f`
+**Current Token**: `<redacted>`
 - **Length**: 64 hex characters
 - **Bits of Entropy**: 256 bits (64 × 4)
 - **Possible Values**: 2^256 = 1.16 × 10^77

@@ -31,8 +31,8 @@
 
 ```bash
 METABASE_URL=https://forestadmin-bi.herokuapp.com
-METABASE_API_KEY=mb_nylmfZ8IJFvpIWkYbq0ZNxLrDUIJh8ONpMjfRwa+XZY=
-MCP_AUTH_TOKEN=529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f
+METABASE_API_KEY=<redacted>
+MCP_AUTH_TOKEN=<redacted>
 ```
 
 ---
@@ -96,7 +96,7 @@ MCP_AUTH_TOKEN=529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f
    - **Transport**: `SSE`
    - **Endpoint**: `/`
    - **Auth Method**: `Bearer Token`
-   - **Token**: `529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f`
+   - **Token**: `<redacted>`
 
 3. **Tool Permissions**: Set all 22 tools to **LOW stake** (all read-only and safe)
 
@@ -134,8 +134,8 @@ heroku create forestadmin-metabase-mcp --team forestadmin
 # Set environment variables
 heroku config:set \
   METABASE_URL=https://forestadmin-bi.herokuapp.com \
-  METABASE_API_KEY="mb_nylmfZ8IJFvpIWkYbq0ZNxLrDUIJh8ONpMjfRwa+XZY=" \
-  MCP_AUTH_TOKEN=529c5ab1c0ff2b90e083f1f5b0d7ef5f2237ada2b5b60dfbfdb564ba070f0b8f \
+  METABASE_API_KEY="<redacted>" \
+  MCP_AUTH_TOKEN=<redacted> \
   --app forestadmin-metabase-mcp
 
 # Deploy
