@@ -1,4 +1,5 @@
 .env
+CREDENTIALS_ROTATION.md
 __pycache__/
 *.pyc
 venv/
