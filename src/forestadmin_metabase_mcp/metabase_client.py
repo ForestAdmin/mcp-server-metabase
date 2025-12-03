@@ -219,8 +219,10 @@ class MetabaseClient:
                 raise ValueError(f"Query contains potentially dangerous pattern: {pattern}. Only simple SELECT queries are allowed.")
 
         # Ensure query starts with SELECT (allowlist approach)
-        if not query_upper.startswith("SELECT ") and not query_upper.startswith("WITH "):
-            raise ValueError("Only SELECT and WITH (CTE) queries are allowed.")
+        # SECURITY FIX: CTE queries disabled due to SQL injection vulnerability (CVE-2025-XXXXX)
+        # WITH clauses can contain UPDATE/INSERT/DELETE/DROP statements that bypass validation
+        if not query_upper.startswith("SELECT "):
+            raise ValueError("Only SELECT queries are allowed. WITH (CTE) queries are disabled for security reasons.")
 
         try:
             payload = {
@@ -659,6 +661,49 @@ class MetabaseClient:
             Created question data
         """
         await self._ensure_authenticated()
+
+        # SECURITY FIX: Validate native SQL queries to prevent SQL injection (CVE-2025-XXXXX)
+        if "native" in query and "query" in query["native"]:
+            sql_query = query["native"]["query"]
+            if isinstance(sql_query, str):
+                query_upper = sql_query.strip().upper()
+
+                # Check for forbidden keywords (write operations)
+                forbidden = [
+                    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+                    "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE",
+                    "INTO", "MERGE", "REPLACE", "CALL", "PREPARE",
+                    "DEALLOCATE", "LOCK", "UNLOCK"
+                ]
+
+                for keyword in forbidden:
+                    if keyword in query_upper:
+                        logger.error(f"Forbidden SQL keyword '{keyword}' found in create_question")
+                        raise ValueError(
+                            f"Forbidden SQL keyword '{keyword}' found in question query. "
+                            f"Only read-only SELECT queries are allowed."
+                        )
+
+                # Ensure query starts with SELECT only (no CTE)
+                if not query_upper.startswith("SELECT "):
+                    logger.error(f"create_question rejected non-SELECT query: {query_upper[:50]}")
+                    raise ValueError(
+                        "Question queries must start with SELECT. "
+                        "Only read-only SELECT queries are allowed. "
+                        "WITH (CTE) queries are disabled for security reasons."
+                    )
+
+                # Block dangerous patterns
+                dangerous_patterns = [";", "--", "/*", "*/"]
+                for pattern in dangerous_patterns:
+                    if pattern in query_upper:
+                        logger.error(f"Dangerous SQL pattern '{pattern}' found in create_question")
+                        raise ValueError(
+                            f"Question query contains dangerous SQL pattern '{pattern}'. "
+                            f"Only simple SELECT queries are allowed."
+                        )
+
+                logger.info(f"Validated native SQL in create_question: {sql_query[:100]}...")
 
         # Ensure dataset_query has the database field set correctly
         dataset_query = query.copy()
