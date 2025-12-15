@@ -84,19 +84,20 @@ def get_metabase_connection(request: Request) -> str:
         logger.warning(f"Request without X-Metabase-Connection header from IP: {client_ip}")
         raise HTTPException(
             status_code=400,
-            detail="Missing X-Metabase-Connection header. Please specify connection name (e.g., 'mcp-server-metabase-admin' or 'mcp-server-metabase-revenue')."
+            detail="Missing X-Metabase-Connection header. Please provide a valid connection key."
         )
 
     if connection not in metabase_clients:
         client_ip = request.client.host if request.client else "unknown"
-        available_connections = list(metabase_clients.keys())
+        # Hash the invalid connection key for logging (don't log the actual key)
+        connection_hash = hash_token(connection)
         logger.warning(
-            f"Invalid connection '{connection}' requested from IP: {client_ip}. "
-            f"Available: {available_connections}"
+            f"Invalid connection key attempted from IP: {client_ip}, "
+            f"hash: {connection_hash}"
         )
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid connection name: '{connection}'. Available connections: {', '.join(available_connections)}"
+            status_code=403,
+            detail="Invalid connection key. Access denied."
         )
 
     logger.debug(f"Using Metabase connection: {connection}")
@@ -168,24 +169,28 @@ async def lifespan(app: FastAPI):
     logger.info(f"Metabase URL: {base_url if base_url else 'Not configured'}")
 
     # Initialize multiple Metabase connections
+    # Map random connection keys to their API keys
     connections = {
-        "mcp-server-metabase-admin": os.getenv("METABASE_API_KEY_ADMIN"),
-        "mcp-server-metabase-revenue": os.getenv("METABASE_API_KEY_REVENUE")
+        os.getenv("CONNECTION_KEY_ADMIN"): os.getenv("METABASE_API_KEY_ADMIN"),
+        os.getenv("CONNECTION_KEY_REVENUE"): os.getenv("METABASE_API_KEY_REVENUE")
     }
 
     for connection_name, api_key in connections.items():
-        if api_key:
-            try:
-                metabase_clients[connection_name] = MetabaseClient(
-                    base_url=base_url,
-                    api_key=api_key
-                )
-                logger.info(f"✓ Metabase connection '{connection_name}' initialized successfully")
-            except Exception as e:
-                logger.error(f"✗ Failed to initialize connection '{connection_name}': {e}")
-                raise
-        else:
-            logger.warning(f"⚠ Connection '{connection_name}' not configured (missing API key)")
+        # Skip if connection key or API key is not configured
+        if not connection_name or not api_key:
+            continue
+
+        try:
+            metabase_clients[connection_name] = MetabaseClient(
+                base_url=base_url,
+                api_key=api_key
+            )
+            # Log with masked connection key (first 8 chars only)
+            masked_key = connection_name[:8] + "..." if len(connection_name) > 8 else connection_name
+            logger.info(f"✓ Metabase connection '{masked_key}' initialized successfully")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize connection: {e}")
+            raise
 
     if not metabase_clients:
         logger.error("No Metabase connections configured! At least one connection is required.")
