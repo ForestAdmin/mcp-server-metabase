@@ -31,8 +31,8 @@ security = HTTPBearer(auto_error=False)
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# Global Metabase client
-metabase_client: MetabaseClient | None = None
+# Global Metabase clients (connection-based)
+metabase_clients: dict[str, MetabaseClient] = {}
 
 
 # Middleware for request size limits
@@ -62,6 +62,45 @@ class LimitUploadSize(BaseHTTPMiddleware):
 def hash_token(token: str) -> str:
     """Hash a token for secure logging without exposing the actual token."""
     return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def get_metabase_connection(request: Request) -> str:
+    """
+    Get Metabase connection name from X-Metabase-Connection header.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        Connection name from header
+
+    Raises:
+        HTTPException: If header is missing or connection doesn't exist
+    """
+    connection = request.headers.get("X-Metabase-Connection")
+
+    if not connection:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning(f"Request without X-Metabase-Connection header from IP: {client_ip}")
+        raise HTTPException(
+            status_code=400,
+            detail="Missing X-Metabase-Connection header. Please specify connection name (e.g., 'mcp-server-metabase-admin' or 'mcp-server-metabase-revenue')."
+        )
+
+    if connection not in metabase_clients:
+        client_ip = request.client.host if request.client else "unknown"
+        available_connections = list(metabase_clients.keys())
+        logger.warning(
+            f"Invalid connection '{connection}' requested from IP: {client_ip}. "
+            f"Available: {available_connections}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid connection name: '{connection}'. Available connections: {', '.join(available_connections)}"
+        )
+
+    logger.debug(f"Using Metabase connection: {connection}")
+    return connection
 
 
 async def verify_mcp_token(
@@ -120,36 +159,49 @@ async def verify_mcp_token(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for FastAPI app."""
-    global metabase_client
+    global metabase_clients
 
     # Startup
     base_url = os.getenv("METABASE_URL")
-    api_key = os.getenv("METABASE_API_KEY")
-    username = os.getenv("METABASE_USERNAME")
-    password = os.getenv("METABASE_PASSWORD")
 
-    logger.info("Starting Forest Admin Metabase MCP Server (SSE)")
+    logger.info("Starting Forest Admin Metabase MCP Server (SSE) with multi-connection support")
     logger.info(f"Metabase URL: {base_url if base_url else 'Not configured'}")
-    logger.info(f"Authentication: {'API Key' if api_key else 'Username/Password' if username and password else 'Not configured'}")
 
-    try:
-        metabase_client = MetabaseClient(
-            base_url=base_url,
-            api_key=api_key,
-            username=username,
-            password=password
-        )
-        logger.info("Metabase client initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize Metabase client: {e}")
-        raise
+    # Initialize multiple Metabase connections
+    connections = {
+        "mcp-server-metabase-admin": os.getenv("METABASE_API_KEY_ADMIN"),
+        "mcp-server-metabase-revenue": os.getenv("METABASE_API_KEY_REVENUE")
+    }
+
+    for connection_name, api_key in connections.items():
+        if api_key:
+            try:
+                metabase_clients[connection_name] = MetabaseClient(
+                    base_url=base_url,
+                    api_key=api_key
+                )
+                logger.info(f"✓ Metabase connection '{connection_name}' initialized successfully")
+            except Exception as e:
+                logger.error(f"✗ Failed to initialize connection '{connection_name}': {e}")
+                raise
+        else:
+            logger.warning(f"⚠ Connection '{connection_name}' not configured (missing API key)")
+
+    if not metabase_clients:
+        logger.error("No Metabase connections configured! At least one connection is required.")
+        raise ValueError("No Metabase connections configured")
+
+    logger.info(f"Total active connections: {len(metabase_clients)}")
+    logger.info(f"Available connections: {', '.join(metabase_clients.keys())}")
 
     yield
 
     # Shutdown
     logger.info("Shutting down MCP server")
-    if metabase_client:
-        metabase_client.close()
+    for connection_name, client in metabase_clients.items():
+        logger.info(f"Closing connection: {connection_name}")
+        client.close()
+    metabase_clients.clear()
 
 
 # Initialize FastAPI app
@@ -317,12 +369,14 @@ async def root_post(request: Request, token: str = Depends(verify_mcp_token)):
 
         # Handle tools/call request
         elif method == "tools/call":
+            # Get connection from header (REQUIRED for tool calls)
+            connection_name = get_metabase_connection(request)
+            metabase_client = metabase_clients[connection_name]
+
             tool_name = params.get("name")
             tool_arguments = params.get("arguments", {})
 
-            if metabase_client is None:
-                raise RuntimeError("Metabase client not initialized")
-
+            logger.info(f"Executing tool '{tool_name}' on connection '{connection_name}'")
             result = await execute_tool(metabase_client, tool_name, tool_arguments)
 
             return {
@@ -348,6 +402,9 @@ async def root_post(request: Request, token: str = Depends(verify_mcp_token)):
                 }
             }
 
+    except HTTPException as he:
+        # Re-raise HTTP exceptions (like missing header)
+        raise he
     except Exception as e:
         logger.error(f"Error handling POST request at /: {e}", exc_info=True)
         return {
@@ -363,11 +420,15 @@ async def root_post(request: Request, token: str = Depends(verify_mcp_token)):
 @app.get("/health")
 async def health_check():
     """Detailed health check."""
-    is_healthy = metabase_client is not None
+    is_healthy = len(metabase_clients) > 0
+    connections_status = {
+        name: "initialized" for name in metabase_clients.keys()
+    }
     return {
         "status": "healthy" if is_healthy else "unhealthy",
-        "metabase_client": "initialized" if is_healthy else "not initialized",
-        "metabase_url": metabase_client.base_url if is_healthy and metabase_client else None
+        "connections": connections_status,
+        "connection_count": len(metabase_clients),
+        "metabase_url": list(metabase_clients.values())[0].base_url if metabase_clients else None
     }
 
 
@@ -461,12 +522,14 @@ async def handle_sse_post(request: Request, token: str = Depends(verify_mcp_toke
 
         # Handle tools/call request
         elif method == "tools/call":
+            # Get connection from header (REQUIRED for tool calls)
+            connection_name = get_metabase_connection(request)
+            metabase_client = metabase_clients[connection_name]
+
             tool_name = params.get("name")
             tool_arguments = params.get("arguments", {})
 
-            if metabase_client is None:
-                raise RuntimeError("Metabase client not initialized")
-
+            logger.info(f"Executing tool '{tool_name}' on connection '{connection_name}'")
             result = await execute_tool(metabase_client, tool_name, tool_arguments)
 
             return {
@@ -492,6 +555,9 @@ async def handle_sse_post(request: Request, token: str = Depends(verify_mcp_toke
                 }
             }
 
+    except HTTPException as he:
+        # Re-raise HTTP exceptions (like missing header)
+        raise he
     except Exception as e:
         logger.error(f"Error handling POST request: {e}", exc_info=True)
         return {
